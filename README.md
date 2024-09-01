@@ -4,7 +4,6 @@ Convolution network implemented in NumPy
 
 ### Things to do
 - Weight adjustments (momentum, variable learning rate, ...)
-- Regularization (l1, l2, dropout, ...)
 - Evaluation (precision, recall, confusion matrix, ...)
 - Visualization
 

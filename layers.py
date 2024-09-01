@@ -1,6 +1,6 @@
 import numpy as np
 
-learning_rate = 0.005
+learning_rate = 0.001
 
 class Convolution:
     def __init__(self, label, kernel_width, kernel_height, channels_in, channels_out, stride=1):
@@ -36,20 +36,23 @@ class Convolution:
     
     def backward(self, output_gradient):
         #weight: convolution (X, K=output_gradient)
-        input = self.previous_input[0,:,:,:]
+        input = self.previous_input#[0,:,:,:]
 
-        depth, height, width = input.shape
+        _, _, height, width = input.shape
         _, k_height, k_width = output_gradient.shape
 
+        output_gradient = np.expand_dims(output_gradient, 1)
         weight_gradient = np.zeros(shape=self.kernels.shape)
-        for dep in range(weight_gradient.shape[0]):
-            for row in range(0, height-k_height+1, 1):#assume stride=1
-                for col in range(0, width-k_width+1, 1):#assume stride=1
-                    end_row = row + k_height
-                    end_col = col + k_width
-                    weight_gradient[dep,:,row,col] = np.sum(output_gradient[dep,:,:] * input[:,row:end_row,col:end_col], axis=(1,2))
-        self.weight_gradients.append(weight_gradient)
 
+        for row in range(0, height-k_height+1, 1):#assume stride=1
+            for col in range(0, width-k_width+1, 1):#assume stride=1
+                end_row = row + k_height
+                end_col = col + k_width
+                weight_gradient[:,:,row,col] = np.sum(output_gradient * input[:,:,row:end_row,col:end_col], axis=(2,3))
+        self.weight_gradients.append(weight_gradient)
+        
+        output_gradient = output_gradient.squeeze()
+        
         #bias: output_gradient
         bias_gradient = output_gradient
         self.bias_gradients.append(bias_gradient)
@@ -64,13 +67,13 @@ class Convolution:
 
         padded_output_gradient = np.zeros(shape=(output_gradient.shape + np.array([0, 2*(k_height-1), 2*(k_width-1)])))
         padded_output_gradient[:,k_height-1:-k_height+1,k_width-1:-k_width+1] = output_gradient
+        padded_output_gradient = np.expand_dims(padded_output_gradient, 1)
 
-        for dep in range(depth):
-            for row in range(0, height, 1):#assume stride=1
-                for col in range(0, width, 1):#assume stride=1
-                    end_row = row + k_height
-                    end_col = col + k_width
-                    input_gradient[dep,row,col] = np.sum(padded_output_gradient[:,row:end_row,col:end_col] * reflected_weights[:,dep,:,:])
+        for row in range(0, height, 1):#assume stride=1
+            for col in range(0, width, 1):#assume stride=1
+                end_row = row + k_height
+                end_col = col + k_width
+                input_gradient[:,row,col] = np.sum(padded_output_gradient[:,:,row:end_row,col:end_col] * reflected_weights[:,:,:,:])
 
         return input_gradient
 
@@ -78,7 +81,6 @@ class Convolution:
         stacked_gradients = np.stack(self.weight_gradients)
         gradient = np.mean(stacked_gradients)
         self.kernels -= learning_rate * gradient
-
         self.clear_gradients()
 
     def save_state(self):
@@ -93,7 +95,7 @@ class ReLU:
         return np.maximum(0, x)
     
     def backward(self, output_gradient):
-        local_gradient = np.array(self.previous_input > 0, dtype=int)
+        local_gradient = np.array(self.previous_input > 0, dtype=np.int64)
         input_gradient = local_gradient * output_gradient
         return input_gradient
 
@@ -177,11 +179,18 @@ class Dense:
         self.bias_gradients = []
 
 class Dropout:
-    def __init__(self):
-        pass
+    def __init__(self, probability):
+        self.probability = probability
+        
+    def __call__(self, x):
+        mask = np.random.binomial(n=1, p=1-self.probability, size=x.shape)
+        output = x * mask
+        self.previous_mask = mask
+        return output
 
-    def backward(self, grad, loss):
-        pass
+    def backward(self, output_gradient):
+        input_gradient = output_gradient * self.previous_mask
+        return input_gradient
 
 class Softmax:
     def __call__(self, x):
@@ -197,6 +206,8 @@ class Model:
     def __init__(self, layers):
         self.layers = layers
         self.loss_function = CrossEntropyLoss()
+        self.training = True
+        self.losses = []
 
     def forward(self, x):
         for layer in self.layers:
@@ -205,12 +216,11 @@ class Model:
         return x
     
     def backward(self, target):
-        gradient = self.previous_output - target
+        gradient = self.previous_output - target#assume softmax + cross entropy
         for layer in self.layers[-2::-1]:
-            print(gradient)
             gradient = layer.backward(gradient)
-        print(gradient)
         loss = self.loss_function(self.previous_output, target)
+        self.losses.append(loss)
         return loss
 
     def update(self):
